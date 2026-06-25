@@ -1,0 +1,8 @@
+js/
+results/
+nohup.out
+prompts.txt
+rounds/
+downloads/
+.env
+.venv
