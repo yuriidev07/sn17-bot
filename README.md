@@ -84,6 +84,39 @@ js/<account_name>/   — extracted JS files before upload
 
 ---
 
+### `repo_update.py` — Bulk repository visibility toggle
+
+Sets all GitHub repositories listed in `.env` to either public or private across all accounts in one go.
+
+```bash
+python repo_update.py
+```
+
+You will be prompted for one input:
+
+```
+Type public or private:   # e.g. private
+```
+
+**What it does:**
+
+1. Reads every `*_CONFIG` entry from `.env` and extracts the `GIT_TOKEN` and `REPOS` list for each account.
+2. Calls the GitHub API (`PATCH /repos/{owner}/{name}`) to set every repo to the chosen visibility.
+3. Prints `[OK]` or `[ERR]` for each repo with the result.
+
+**Example output:**
+
+```
+[SR1279_CONFIG] Setting 5 repo(s) to private …
+  [OK]   SR1279/DoYourBest  →  private
+  [OK]   SR1279/RLStepone   →  private
+  ...
+```
+
+> `GIT_TOKEN` must have the `repo` scope to change repository visibility.
+
+---
+
 ## Notes
 
 - Never commit `.env` — it is already listed in `.gitignore`.
