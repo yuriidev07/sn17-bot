@@ -12,25 +12,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 config = dotenv_values(".env")
 
-ACCOUNT_NAMES = ["SR1279", "Gael1125", "TSH483", "lucky319193"]
-
-ACCOUNT_CONFIGS = {
-    name: json.loads(config[f"{name}_CONFIG"])
-    for name in ACCOUNT_NAMES
-}
-
-S3_CLIENTS = {
-    name: boto3.client(
-        "s3",
-        endpoint_url=ACCOUNT_CONFIGS[name]['ENDPOINT_URL'],
-        aws_access_key_id=ACCOUNT_CONFIGS[name]['ACCESS_KEY_ID'],
-        aws_secret_access_key=ACCOUNT_CONFIGS[name]['SECRET_ACCESS_KEY'],
-        config=Config(signature_version="s3v4"),
-        region_name="auto"
-    )
-    for name in ACCOUNT_NAMES
-}
-
 def is_github_file_downloadable(repo_url):
     """
     Check if a GitHub file is downloadable.
@@ -117,25 +98,17 @@ def download_results(filename):
         return False
 
 ### upload a single js file from js/ to R2
-def upload_js_file(js_filename, bucket_folder_name, account_name):
-    if account_name not in S3_CLIENTS:
-        raise ValueError(f"Invalid account name: {account_name}")
-
+def upload_js_file(js_filename, bucket_folder_name, s3_client, bucket_name, account_name):
     r2_object_key = f"{bucket_folder_name}/{js_filename}"
     local_path = f"js/{account_name}/{js_filename}"
 
-    S3_CLIENTS[account_name].upload_file(local_path, "sn17", r2_object_key)
+    s3_client.upload_file(local_path, bucket_name, r2_object_key)
     print(f"✅ Uploaded '{js_filename}' to R2 '{bucket_folder_name}/'")
 
-def clear_r2_folder(bucket_folder_name, account_name):
-    if account_name not in S3_CLIENTS:
-        raise ValueError(f"Invalid account name: {account_name}")
-
-    client = S3_CLIENTS[account_name]
-
+def clear_r2_folder(bucket_folder_name, s3_client, bucket_name, account_name):
     prefix = f"{bucket_folder_name}/"
-    paginator = client.get_paginator("list_objects_v2")
-    pages = paginator.paginate(Bucket="sn17", Prefix=prefix)
+    paginator = s3_client.get_paginator("list_objects_v2")
+    pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
 
     deleted = 0
     for page in pages:
@@ -145,15 +118,26 @@ def clear_r2_folder(bucket_folder_name, account_name):
         delete_payload = {"Objects": [{"Key": obj["Key"]} for obj in objects if obj["Key"] != prefix]}
         if not delete_payload["Objects"]:
             continue
-        client.delete_objects(Bucket="sn17", Delete=delete_payload)
+        s3_client.delete_objects(Bucket=bucket_name, Delete=delete_payload)
         deleted += len(delete_payload["Objects"])
 
-    print(f"🗑️  Cleared {deleted} object(s) from {account_name}/sn17/{prefix}")
+    print(f"🗑️  Cleared {deleted} object(s) from {account_name}/{bucket_name}/{prefix}")
 
 if __name__ == "__main__":
     round_id = input("Enter the round number: ")
     folder_name = input("Enter the folder name: ")
     account_name = input("Enter the account name: ")
+
+    account_config = json.loads(config[f"{account_name}_CONFIG"])
+    s3_client = boto3.client(
+        "s3",
+        endpoint_url=account_config['ENDPOINT_URL'],
+        aws_access_key_id=account_config['ACCESS_KEY_ID'],
+        aws_secret_access_key=account_config['SECRET_ACCESS_KEY'],
+        config=Config(signature_version="s3v4"),
+        region_name="auto"
+    )
+    bucket_name = account_config['BUCKET_NAME']
 
     if not os.path.exists(f"rounds/{round_id}"):
         os.makedirs(f"rounds/{round_id}")
@@ -165,7 +149,7 @@ if __name__ == "__main__":
         os.makedirs("js")
 
     print(f"🗑️  Clearing R2 {folder_name} folder before starting...")   
-    clear_r2_folder(folder_name, account_name)
+    clear_r2_folder(folder_name, s3_client, bucket_name, account_name)
     print(f"✅ R2 {folder_name} folder cleared")
 
     prompt_url = f"https://github.com/404-Repo/404-active-competition/blob/main/rounds/{round_id}/prompts.txt"
@@ -182,7 +166,7 @@ if __name__ == "__main__":
             with open(f'rounds/{round_id}/prompts.txt', 'r') as file:
                 lines = [line.strip() for line in file]
 
-            BATCH_SIZE = 5
+            BATCH_SIZE = 32
             pending_prompts = [
                 {"stem": Path(line).stem, "image_url": line}
                 for line in lines if line
@@ -230,7 +214,7 @@ if __name__ == "__main__":
                             for item in batch:
                                 if item["stem"] not in failed_stems:
                                     future = upload_executor.submit(
-                                        upload_js_file, f"{item['stem']}.js", folder_name, account_name
+                                        upload_js_file, f"{item['stem']}.js", folder_name, s3_client, bucket_name, account_name
                                     )
                                     upload_futures[future] = item["stem"]
                                     print(f"  ✅ {item['stem']} complete, upload queued")
